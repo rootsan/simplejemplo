@@ -1,0 +1,66 @@
+---
+- name: "Etapa 2: Despliegue de Forgejo (SCM)"
+  hosts: localhost
+  connection: local
+  gather_facts: yes
+
+  tasks:
+    - name: "Paso 1: Crear directorio principal para Forgejo"
+      file:
+        path: "{{ ansible_env.HOME }}/cicd-stack/forgejo"
+        state: directory
+        mode: '0755'
+
+    - name: "Paso 2: Generar el archivo docker-compose.yml (Infraestructura como Código)"
+      copy:
+        dest: "{{ ansible_env.HOME }}/cicd-stack/forgejo/docker-compose.yml"
+        content: |
+          version: '3'
+          
+          networks:
+            cicd_net:
+              driver: bridge
+          
+          services:
+            forgejo:
+              image: codeberg.org/forgejo/forgejo:9
+              container_name: forgejo
+              environment:
+                - USER_UID=1000
+                - USER_GID=1000
+              restart: always
+              networks:
+                - cicd_net
+              volumes:
+                - forgejo_data:/data
+                - /etc/timezone:/etc/timezone:ro
+                - /etc/localtime:/etc/localtime:ro
+              ports:
+                - "3000:3000"
+                - "2222:22"
+          
+          volumes:
+            forgejo_data:
+
+    - name: "Paso 3: Levantar Forgejo usando podman-compose"
+      command: podman-compose up -d
+      args:
+        chdir: "{{ ansible_env.HOME }}/cicd-stack/forgejo"
+      register: podman_output
+
+    - name: "Paso 4: Esperar a que el puerto 3000 (Web) esté activo"
+      wait_for:
+        port: 3000
+        delay: 5
+        timeout: 60
+        msg: "El contenedor está tardando en responder, pero debería estar levantándose."
+
+    - name: "Resultado"
+      debug:
+        msg: "✅ Forgejo desplegado con éxito. Puedes acceder en http://<IP_DE_TU_SERVIDOR>:3000"
+    - name: "Permitir Webhooks a IPs locales en Forgejo"
+      lineinfile:
+        path: "{{ ansible_env.HOME }}/cicd-stack/forgejo/data/gitea/conf/app.ini"
+        line: "ALLOWED_HOST_LIST = *"
+        insertafter: EOF
+      notify: Reiniciar Forgejo

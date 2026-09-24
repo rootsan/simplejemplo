@@ -1,0 +1,47 @@
+---
+- name: "Preparación Base: Servidor CI/CD Open Source"
+  hosts: bearhouse
+  connection: local
+  become: yes # Ejecuta todas las tareas con privilegios sudo
+
+  tasks:
+    - name: "Paso 1: Actualizar el caché de apt"
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: "Paso 2: Instalar herramientas base y de orquestación"
+      apt:
+        name:
+          - curl
+          - git
+          - nano
+          - jq
+          - podman
+          - podman-compose
+          - ansible
+        state: present
+
+    - name: "Paso 3: Habilitar y arrancar el socket de Podman"
+      systemd:
+        name: podman.socket
+        state: started
+        enabled: yes
+
+    - name: "Paso 4: Crear enlace simbólico para emular Docker"
+      file:
+        src: /run/podman/podman.sock
+        dest: /var/run/docker.sock
+        state: link
+        force: yes # Sobrescribe si ya existe un enlace roto
+
+    - name: "Verificación: Comprobar la respuesta del socket emulado"
+      uri:
+        url: http://localhost/_ping
+        unix_socket: /var/run/docker.sock
+        return_content: yes
+      register: socket_check
+
+    - name: "Mostrar el resultado del socket en pantalla"
+      debug:
+        msg: "✅ Configuración exitosa. El socket de Podman responde como Docker: '{{ socket_check.content }}'"

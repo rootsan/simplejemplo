@@ -1,0 +1,79 @@
+---
+- name: "Etapa 3: Motor CI (Woodpecker Server y Runner)"
+  hosts: localhost
+  connection: local
+  gather_facts: yes
+  vars:
+    # ⚠️ CAMBIA ESTOS VALORES
+    server_ip: "TU_IP"
+    forgejo_client: "TU_CLIENT_ID"
+    forgejo_secret: "TU_CLIENT_SECRET"
+    rpc_secret: "secreto_interno_super_seguro_123"
+
+  tasks:
+    - name: "Paso 1: Crear directorio principal para Woodpecker"
+      file:
+        path: "{{ ansible_env.HOME }}/cicd-stack/woodpecker"
+        state: directory
+        mode: '0755'
+
+    - name: "Paso 1.5: Crear directorio de datos local (Solución a permisos rootless)"
+      file:
+        path: "{{ ansible_env.HOME }}/cicd-stack/woodpecker/data"
+        state: directory
+        mode: '0777'
+
+    - name: "Paso 2: Generar docker-compose.yml de Woodpecker"
+      copy:
+        dest: "{{ ansible_env.HOME }}/cicd-stack/woodpecker/docker-compose.yml"
+        content: |
+          version: '3'
+
+          services:
+            woodpecker-server:
+              image: docker.io/woodpeckerci/woodpecker-server:v3
+              container_name: woodpecker-server
+              restart: always
+              ports:
+                - 8000:8000
+              environment:
+                - WOODPECKER_OPEN=true
+                - WOODPECKER_HOST=http://{{ server_ip }}:8000
+                - WOODPECKER_FORGEJO=true
+                - WOODPECKER_FORGEJO_URL=http://{{ server_ip }}:3000
+                - WOODPECKER_FORGEJO_CLIENT={{ forgejo_client }}
+                - WOODPECKER_FORGEJO_SECRET={{ forgejo_secret }}
+                - WOODPECKER_RPC_SECRET={{ rpc_secret }}
+              volumes:
+                - ./data:/var/lib/woodpecker
+
+            woodpecker-agent:
+              image: docker.io/woodpeckerci/woodpecker-agent:v3
+              container_name: woodpecker-agent
+              restart: always
+              command: agent
+              depends_on:
+                - woodpecker-server
+              environment:
+                - WOODPECKER_SERVER=woodpecker-server:9000
+                - WOODPECKER_RPC_SECRET={{ rpc_secret }}
+              volumes:
+                - /var/run/docker.sock:/var/run/docker.sock
+
+    - name: "Paso 3: Levantar Woodpecker usando podman-compose"
+      command: podman-compose up -d
+      args:
+        chdir: "{{ ansible_env.HOME }}/cicd-stack/woodpecker"
+
+    - name: "Paso 4: Verificar que el Agente de Woodpecker esté en ejecución"
+      command: podman ps --filter "name=woodpecker-agent" --filter "status=running" -q
+      register: agent_check
+      until: agent_check.stdout != ""
+      retries: 10
+      delay: 3
+      failed_when: agent_check.stdout == ""
+      changed_when: false
+
+    - name: "Resultado"
+      debug:
+        msg: "✅ Woodpecker Server y Agent activos. Accede en http://{{ server_ip }}:8000"
